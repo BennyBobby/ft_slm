@@ -1,0 +1,30 @@
+model:
+  name: "Qwen/Qwen2-0.5B"
+  max_length: 512
+
+data:
+  categories:
+    - "cs.LG"
+    - "cs.CL"
+  papers_per_batch: 500
+  replay_ratio: 0.2
+
+training:
+  epochs_per_batch: 1
+  batch_size: 8
+  learning_rate: 2e-4
+  warmup_steps: 100
+
+lora:
+  r: 8
+  alpha: 32
+  dropout: 0.05
+
+ewc:
+  lambda: 0.4
+
+paths:
+  data_raw: "data/raw"
+  data_processed: "data/processed"
+  models: "models"
+  results: "results"
