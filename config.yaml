@@ -25,6 +25,5 @@ ewc:
 
 paths:
   data_raw: "data/raw"
-  data_processed: "data/processed"
   models: "models"
   results: "results"
