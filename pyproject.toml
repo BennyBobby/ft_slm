@@ -8,6 +8,7 @@ dependencies = [
     "accelerate>=1.13.0",
     "datasets>=2.19.1",
     "jupyter>=1.1.1",
+    "lm-eval>=0.4.12",
     "matplotlib>=3.10.9",
     "numpy>=2.4.4",
     "peft>=0.19.1",

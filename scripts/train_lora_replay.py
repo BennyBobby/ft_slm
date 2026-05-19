@@ -1,85 +1,10 @@
 import json
-import math
 import random
-import yaml
 import torch
 from pathlib import Path
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from torch.utils.data import DataLoader, ConcatDataset
 from peft import get_peft_model, LoraConfig, TaskType
-from tqdm import tqdm
-
-
-class AbstractDataset(Dataset):
-    def __init__(self, papers: list[dict], tokenizer, max_length: int):
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.encodings = self._tokenize(papers)
-
-    def _tokenize(self, papers: list[dict]) -> dict:
-        texts = [p["abstract"] for p in papers]
-        return self.tokenizer(
-            texts,
-            truncation=True,
-            max_length=self.max_length,
-            padding="max_length",
-            return_tensors="pt",
-        )
-
-    def __len__(self) -> int:
-        return len(self.encodings["input_ids"])
-
-    def __getitem__(self, idx: int) -> dict:
-        return {
-            "input_ids": self.encodings["input_ids"][idx],
-            "attention_mask": self.encodings["attention_mask"][idx],
-        }
-
-
-def compute_perplexity(model, dataloader, device):
-    model.eval()
-    total_loss = 0.0
-    total_batches = 0
-
-    with torch.no_grad():
-        for batch in dataloader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=input_ids,
-            )
-            total_loss += outputs.loss.item()
-            total_batches += 1
-
-    avg_loss = total_loss / total_batches
-    return math.exp(avg_loss)
-
-
-def train_one_batch(model, dataloader, optimizer, device):
-    model.train()
-    total_loss = 0.0
-
-    for batch in tqdm(dataloader, desc="Training"):
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-
-        outputs = model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=input_ids,
-        )
-
-        loss = outputs.loss
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-
-        total_loss += loss.item()
-
-    return total_loss / len(dataloader)
+from utils import load_config, load_model, AbstractDataset, compute_perplexity, train_one_batch
 
 
 def build_replay_dataset(current_dataset, previous_datasets, replay_ratio):
@@ -97,17 +22,12 @@ def build_replay_dataset(current_dataset, previous_datasets, replay_ratio):
 
 
 def main():
-    with open("config.yaml", "r") as f:
-        config = yaml.safe_load(f)
+    config = load_config()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device : {device}")
 
-    model_name = config["model"]["name"]
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.bfloat16)
+    model, tokenizer = load_model(config["model"]["name"])
 
     lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
@@ -163,6 +83,14 @@ def main():
             ppl = compute_perplexity(model, seen_loader, device)
             results[batch_name][seen_name] = ppl
             print(f"  Perplexity on {seen_name} : {ppl:.2f}")
+
+        merged_model = model.merge_and_unload()
+        checkpoint_path = Path(config["paths"]["models"]) / "lora_replay" / batch_name
+        merged_model.save_pretrained(checkpoint_path)
+        tokenizer.save_pretrained(checkpoint_path)
+        print(f"Checkpoint saved: {checkpoint_path}")
+        model = get_peft_model(merged_model, lora_config)
+        model.to(device)
 
     results_path = Path(config["paths"]["results"]) / "lora_replay_results.json"
     with open(results_path, "w") as f:
