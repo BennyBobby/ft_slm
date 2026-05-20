@@ -123,7 +123,11 @@ def main():
             print(f"Epoch {epoch+1} — loss: {loss:.4f}")
 
         print("Computing Fisher...")
-        fisher = compute_fisher(model, dataloader, device)
+        new_fisher = compute_fisher(model, dataloader, device)
+        if fisher is None:
+            fisher = new_fisher
+        else:
+            fisher = {name: fisher[name] + new_fisher[name] for name in new_fisher}
         params_before = {
             name: param.detach().clone() for name, param in model.named_parameters()
         }
@@ -138,7 +142,7 @@ def main():
             results[batch_name][seen_name] = ppl
             print(f"  Perplexity on {seen_name} : {ppl:.2f}")
 
-    results_path = Path(config["paths"]["results"]) / "ewc_results.json"
+    results_path = Path(config["paths"]["results"]) / "ewc_accumulated_results.json"
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults saved: {results_path}")
