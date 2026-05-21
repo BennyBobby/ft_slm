@@ -23,6 +23,9 @@ lora:
 ewc:
   lambda: 5.0
 
+olora:
+  lambda: 1.0
+
 paths:
   data_raw: "data/raw"
   models: "models"
