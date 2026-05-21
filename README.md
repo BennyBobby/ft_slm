@@ -1,6 +1,6 @@
-# ft_slm — Sequential Fine-Tuning of Small Language Models
+# ft_slm : Sequential Fine-Tuning of Small Language Models
 
-A research project exploring **continual learning** strategies for small LLMs, comparing three approaches to mitigate catastrophic forgetting during sequential fine-tuning on ArXiv papers.
+A research project exploring **continual learning** strategies for small LLMs, comparing five approaches to mitigate catastrophic forgetting during sequential fine-tuning on ArXiv papers.
 
 ---
 
@@ -8,25 +8,43 @@ A research project exploring **continual learning** strategies for small LLMs, c
 
 A small LLM (Qwen2-0.5B) is fine-tuned sequentially on 4 quarterly batches of ArXiv papers (cs.LG + cs.CL, 2024). After each batch, perplexity is evaluated on all previously seen batches to measure forgetting.
 
-Three strategies are compared:
+Five strategies are compared:
 
-| Strategy          | Description                                          |
-| ----------------- | ---------------------------------------------------- |
-| **Naive**         | Standard fine-tuning, no forgetting protection       |
-| **LoRA + Replay** | LoRA adapters + 20% replay of previous batches       |
-| **EWC**           | Elastic Weight Consolidation (Fisher regularization) |
+| Strategy                  | Description                                                  |
+| ------------------------- | ------------------------------------------------------------ |
+| **Naive**                 | Standard fine-tuning, no forgetting protection               |
+| **EWC (λ=0.4)**           | Elastic Weight Consolidation, single-step Fisher             |
+| **EWC accumulated (λ=5)** | EWC with accumulated Fisher across all batches, stronger λ   |
+| **LoRA + Replay**         | LoRA adapters + 20% replay of previous batches               |
+| **O-LoRA**                | Orthogonal LoRA, penalizes overlap between adapter subspaces |
 
 ### Key Results
 
-Perplexity on batch_01 after training on all 4 batches:
+Perplexity on batch_01 after training on all 4 batches (lower = less forgetting):
 
-| Strategy      | Perplexity (↓ better) | Forgetting |
-| ------------- | --------------------- | ---------- |
-| Naive         | 5.14                  | +102%      |
-| EWC           | 5.02                  | +93%       |
-| LoRA + Replay | **3.66**              | **-4%**    |
+| Strategy                | Perplexity (↓ better) | vs. initial |
+| ----------------------- | --------------------- | ----------- |
+| Naive                   | 5.14                  | +102%       |
+| EWC (λ=0.4)             | ~5.02                 | +97%        |
+| EWC accumulated (λ=5.0) | 5.05                  | +98%        |
+| **O-LoRA**              | **3.70**              | **+45%**    |
+| **LoRA + Replay**       | **3.66**              | **+43%**    |
 
-LoRA + Replay is the clear winner. Perplexity stays stable across all batches while Naive and EWC degrade significantly.
+**O-LoRA matches LoRA + Replay** without storing any old data. There a significant result, as it shows orthogonal subspace adaptation alone is sufficient to prevent most forgetting in this domain-specific setting.
+
+EWC consistently underperforms, even with Fisher accumulation and stronger regularization, likely because the intra-domain similarity between batches makes gradient² importance estimates unreliable.
+
+### Benchmark Results (LoRA + Replay checkpoints)
+
+Evaluated on ARC-Easy, HellaSwag, and PIQA (zero-shot) using [lm-eval](https://github.com/EleutherAI/lm-evaluation-harness):
+
+| Task      | Base model | After batch_04 | Delta |
+| --------- | ---------- | -------------- | ----- |
+| ARC-Easy  | ~48%       | ~50%           | +2.2% |
+| HellaSwag | ~59%       | ~59%           | ≈ 0%  |
+| PIQA      | ~72%       | ~71%           | −1.2% |
+
+Fine-tuning on domain-specific text slightly improves factual reasoning (ARC-Easy), leaves commonsense inference unchanged (HellaSwag), and has negligible impact on physical intuition (PIQA).
 
 ---
 
@@ -35,19 +53,24 @@ LoRA + Replay is the clear winner. Perplexity stays stable across all batches wh
 ```
 ft_slm/
 ├── data/
-│   └── raw/          # ArXiv papers by batch (JSON)
-├── models/           # Model checkpoints
+│   └── raw/                    # ArXiv papers by batch (JSON)
+├── models/
+│   └── lora_replay/            # Merged checkpoints per batch
 ├── notebooks/
-│   └── explore_data.ipynb   # Data exploration + results visualization
-├── results/          # Perplexity results (JSON)
+│   ├── explore_data.ipynb      # Data exploration (distributions, samples)
+│   └── results.ipynb           # Result visualizations (all 5 strategies)
+├── results/                    # Perplexity + benchmark results (JSON)
 ├── scripts/
-│   ├── fetch_data.py        # ArXiv data collection
-│   ├── train_naive.py       # Naive sequential fine-tuning
-│   ├── train_lora_replay.py # LoRA + Replay strategy
-│   └── train_ewc.py         # EWC strategy
-├── config.yaml       # Centralized hyperparameters
-├── Dockerfile        # Reproducible environment (nvidia/cuda:12.8.1)
-└── pyproject.toml    # Python dependencies (uv)
+│   ├── fetch_data.py           # ArXiv data collection
+│   ├── utils.py                # Shared utilities (model loading, dataset, perplexity)
+│   ├── train_naive.py          # Naive sequential fine-tuning
+│   ├── train_lora_replay.py    # LoRA + Replay strategy
+│   ├── train_ewc.py            # EWC with accumulated Fisher (λ=5.0)
+│   ├── train_olora.py          # O-LoRA: orthogonal subspace adaptation
+│   └── eval_benchmarks.py      # Benchmark evaluation (arc_easy, hellaswag, piqa)
+├── config.yaml                 # Centralized hyperparameters
+├── Dockerfile                  # Reproducible environment (nvidia/cuda:12.8.1)
+└── pyproject.toml              # Python dependencies (uv)
 ```
 
 ---
@@ -78,20 +101,29 @@ uv run python scripts/fetch_data.py
 
 ## Usage
 
-Run each strategy sequentially:
+Run each strategy independently:
 
 ```bash
 # Baseline
 uv run python scripts/train_naive.py
 
-# LoRA + Replay
+# LoRA + Replay (saves checkpoints to models/lora_replay/)
 uv run python scripts/train_lora_replay.py
 
-# EWC
+# EWC with accumulated Fisher
 uv run python scripts/train_ewc.py
+
+# O-LoRA
+uv run python scripts/train_olora.py
 ```
 
-Results are saved to `results/` as JSON files. Open `notebooks/explore_data.ipynb` to visualize comparative results.
+Evaluate LoRA+Replay checkpoints on standard benchmarks:
+
+```bash
+uv run python scripts/eval_benchmarks.py
+```
+
+Results are saved to `results/` as JSON files. Open `notebooks/results.ipynb` to visualize all strategies.
 
 ---
 
@@ -115,7 +147,10 @@ lora:
   dropout: 0.05
 
 ewc:
-  lambda: 0.4
+  lambda: 5.0
+
+olora:
+  lambda: 1.0
 
 data:
   replay_ratio: 0.2
@@ -141,8 +176,16 @@ docker run --gpus all \
 
 ## Discussion
 
-**Why does LoRA + Replay outperform EWC?**
+### Why does EWC underperform?
 
-Our EWC implementation uses only the previous batch's Fisher matrix (not accumulated), which limits its protection to one step back. A full EWC implementation would accumulate Fisher across all batches. Additionally, λ=0.4 may be too weak a regularization signal.
+EWC uses the Fisher information matrix to identify important parameters and penalizes deviation from them. In practice, when batches come from the same domain (ML papers from the same year), gradient magnitudes are similar across tasks. Fisher estimates don't cleanly separate "important for batch_01" from "important for batch_02". The penalty ends up being too diffuse to prevent forgetting. Even with Fisher accumulation (λ=5.0), performance matches the Naive baseline.
 
-LoRA + Replay benefits from two complementary mechanisms: LoRA restricts weight updates to low-rank subspaces (less destructive), while replay directly re-exposes the model to old data. This redundancy makes it robustly resistant to forgetting.
+### Why does O-LoRA match LoRA + Replay?
+
+O-LoRA forces each new batch's LoRA A matrices to be orthogonal to those of previous batches, ensuring updates live in different subspaces of the weight space. This prevents new learning from overwriting old representations without storing any data.
+
+The result (3.70 vs 3.66 perplexity) suggests that for domain-specific continual fine-tuning, structural orthogonality is as effective as data replay and more memory-efficient.
+
+### Why does LoRA help in both cases?
+
+LoRA restricts updates to a low-rank subspace (r=8 out of 512 hidden dims). This inherently limits the destructive capacity of each update, making forgetting less severe even before adding orthogonality or replay constraints.
