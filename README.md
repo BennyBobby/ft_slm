@@ -70,7 +70,9 @@ ft_slm/
 │   └── eval_benchmarks.py      # Benchmark evaluation (arc_easy, hellaswag, piqa)
 ├── config.yaml                 # Centralized hyperparameters
 ├── Dockerfile                  # Reproducible environment (nvidia/cuda:12.8.1)
-└── pyproject.toml              # Python dependencies (uv)
+├── pyproject.toml              # Python dependencies (uv)
+├── report.tex                  # LaTeX source of the project report
+└── report.pdf                  # Compiled report (PDF)
 ```
 
 ---
